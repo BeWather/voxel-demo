@@ -1,0 +1,1 @@
+{"format":"editor_voxel_mapa","version":1,"size":[16,16,16],"seed":99,"chunks":[{"pos":[0,0,0],"rle":[3,256,1,256,0,3584]}],"props":[{"cell":[4,2,4],"id":"roble","variant":1,"rot":2},{"cell":[9,2,7],"id":"flor_azul","variant":0,"rot":0}]}
