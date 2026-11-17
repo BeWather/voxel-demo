@@ -117,7 +117,7 @@ func _test_entities_save_load() -> void:
 	var lines: Array = ["¿Viste al ñandú? ¡Pasó corriendo!", "Dijo \"hasta mañana\" y se fue.", "Línea 3"]
 	entities.set_entity(npc_cell, EntityLayer.make_entity(CharacterLibrary.VILLAGER, 2, 3, "Doña Ñusta", lines))
 	var original: Dictionary = MapIO.serialize(world, props, 777, entities)
-	_check(original["version"] == 2, "el mapa se guarda como versión 2")
+	_check(original["version"] == MapIO.VERSION, "el mapa se guarda con la versión actual (%d)" % MapIO.VERSION)
 	_check(original["entities"].size() == entities.entities.size(), "el archivo lista todas las criaturas")
 
 	MapIO.ensure_maps_dir()
@@ -148,9 +148,9 @@ func _test_entities_save_load() -> void:
 	# Versiones desconocidas y criaturas inválidas se rechazan sin tocar el mundo.
 	var before: Dictionary = MapIO.serialize(world2, props2, 0, entities2)
 	var future: Dictionary = original.duplicate(true)
-	future["version"] = 3
+	future["version"] = MapIO.VERSION + 1
 	result = MapIO.deserialize(future, world2, props2, entities2)
-	_check(not result["ok"], "la versión 3 se rechaza (%s)" % str(result["error"]))
+	_check(not result["ok"], "una versión más nueva se rechaza (%s)" % str(result["error"]))
 	var broken: Dictionary = original.duplicate(true)
 	broken["entities"] = [{"cell": [1, 2, 3], "type": "kraken"}]
 	result = MapIO.deserialize(broken, world2, props2, entities2)

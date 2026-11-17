@@ -5,7 +5,7 @@ extends RefCounted
 
 const FORMAT: String = "editor_voxel_mapa"
 ## Versión que se escribe. La versión 1 (sin criaturas) todavía se puede cargar.
-const VERSION: int = 2
+const VERSION: int = 3
 const OLDEST_VERSION: int = 1
 const MAPS_DIR: String = "user://maps"
 const MAX_SIZE: int = 512
@@ -17,8 +17,9 @@ static func ensure_maps_dir() -> void:
 
 ## Convierte el mundo y sus props en un diccionario listo para JSON.
 ## `entities` es opcional; sin ella el mapa se guarda sin criaturas.
+## `backpack` es la mochila del modo juego ({clave de cosa: cantidad}).
 static func serialize(world: VoxelWorld, props: PropLayer, map_seed: int,
-		entities: EntityLayer = null) -> Dictionary:
+		entities: EntityLayer = null, backpack: Dictionary = {}) -> Dictionary:
 	var chunk_list: Array = []
 	var keys: Array = world.chunks.keys()
 	keys.sort()
@@ -61,7 +62,13 @@ static func serialize(world: VoxelWorld, props: PropLayer, map_seed: int,
 				"rot": rot,
 				"name": npc_name,
 				"lines": lines.duplicate(),
+				"friendship": int(e.get("friendship", 0)),
+				"follow": bool(e.get("follow", false)),
 			})
+	# Mochila: solo las cosas conocidas, con cantidades válidas.
+	var bag: Dictionary = {}
+	for key: String in Items.KEYS:
+		bag[key] = clampi(int(backpack.get(key, 0)), 0, Items.CAP)
 
 	return {
 		"format": FORMAT,
@@ -71,6 +78,7 @@ static func serialize(world: VoxelWorld, props: PropLayer, map_seed: int,
 		"chunks": chunk_list,
 		"props": prop_list,
 		"entities": entity_list,
+		"backpack": bag,
 	}
 
 
@@ -163,8 +171,10 @@ static func deserialize(data: Variant, world: VoxelWorld, props: PropLayer,
 		var lines: Array = []
 		if typeof(raw_lines) == TYPE_ARRAY:
 			lines = raw_lines
+		# Amistad y "seguir" existen desde la versión 3; antes valen 0 y false.
+		var follow: bool = typeof(e.get("follow")) == TYPE_BOOL and e.get("follow")
 		new_entities[cell] = EntityLayer.make_entity(type, _to_int(e.get("variant")),
-				_to_int(e.get("rot")), str(e.get("name", "")), lines)
+				_to_int(e.get("rot")), str(e.get("name", "")), lines, _to_int(e.get("friendship")), follow)
 
 	# Recién ahora se toca el mundo: un archivo inválido no destruye el mapa actual.
 	world.replace_all(size_v, new_chunks)
@@ -181,16 +191,17 @@ static func deserialize(data: Variant, world: VoxelWorld, props: PropLayer,
 				skipped, ", ".join(unknown_keys.keys())])
 	if clamped > 0:
 		notes.append("Se ajustó la variante de %d props." % clamped)
-	return {"ok": true, "error": "", "seed": _to_int(d.get("seed")), "warning": " ".join(notes)}
+	return {"ok": true, "error": "", "seed": _to_int(d.get("seed")), "warning": " ".join(notes),
+			"backpack": read_backpack(d.get("backpack"))}
 
 
 ## Guarda el mapa. Devuelve "" si salió bien o un mensaje de error.
 static func save_file(path: String, world: VoxelWorld, props: PropLayer, map_seed: int,
-		entities: EntityLayer = null) -> String:
+		entities: EntityLayer = null, backpack: Dictionary = {}) -> String:
 	var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
 		return "No se pudo escribir el archivo (error %d)." % FileAccess.get_open_error()
-	file.store_string(JSON.stringify(serialize(world, props, map_seed, entities)))
+	file.store_string(JSON.stringify(serialize(world, props, map_seed, entities, backpack)))
 	file.close()
 	return ""
 
@@ -209,8 +220,20 @@ static func load_file(path: String, world: VoxelWorld, props: PropLayer,
 
 # ---------------------------------------------------------------- auxiliares
 
+## Mochila leída de un archivo: las cosas conocidas, con su cantidad entre 0 y el máximo.
+## Los mapas anteriores a la versión 3 no la traen: queda vacía.
+static func read_backpack(value: Variant) -> Dictionary:
+	var bag: Dictionary = Items.empty_backpack()
+	if typeof(value) != TYPE_DICTIONARY:
+		return bag
+	var saved: Dictionary = value
+	for key: String in Items.KEYS:
+		bag[key] = clampi(_to_int(saved.get(key)), 0, Items.CAP)
+	return bag
+
+
 static func _fail(message: String) -> Dictionary:
-	return {"ok": false, "error": message, "seed": 0, "warning": ""}
+	return {"ok": false, "error": message, "seed": 0, "warning": "", "backpack": Items.empty_backpack()}
 
 
 static func _is_number(value: Variant) -> bool:

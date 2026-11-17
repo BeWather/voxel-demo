@@ -22,6 +22,10 @@ const FLY_ACCELERATION: float = 3.5
 ## El dragón puede subir hasta este margen por encima del límite de altura del mundo.
 const FLY_CEILING_MARGIN: float = 8.0
 const MAP_EDGE_MARGIN: float = 0.6
+## Seguir al jugador: a qué distancia se detiene y qué tan rápido puede ir para no perderlo.
+const FOLLOW_STOP_DISTANCE: float = 2.4
+const FOLLOW_MAX_SPEED: float = 8.5
+const HAPPY_HOP_SPEED: float = 3.6
 ## Resultado de mirar el terreno hacia adelante.
 const AHEAD_BLOCKED: int = 0
 const AHEAD_OK: int = 1
@@ -44,6 +48,7 @@ var _base_yaw: float = 0.0
 var _timer: float = 1.0
 var _target: Vector3 = Vector3.ZERO
 var _flee_dir: Vector3 = Vector3.ZERO
+var _shake_time: float = 0.0
 
 
 func setup(library: CharacterLibrary, p_cell: Vector3i, p_data: Dictionary) -> void:
@@ -82,6 +87,82 @@ func reset() -> void:
 	_timer = 1.0
 	rig.reset_pose()
 	rig.rotation = Vector3.ZERO
+	_sync()
+
+
+# ================================================================ amistad
+
+## Puntos de amistad (0 a Items.MAX_POINTS). Viven en los datos de la criatura.
+func friendship() -> int:
+	return data.get("friendship", 0)
+
+
+## Corazones de amistad, de 0 a 3.
+func hearts() -> int:
+	return Items.hearts_for(friendship())
+
+
+## Suma puntos de amistad. Devuelve true si con eso ganó un corazón.
+func add_friendship(points: int) -> bool:
+	var before: int = hearts()
+	data["friendship"] = clampi(friendship() + points, 0, Items.MAX_POINTS)
+	return hearts() > before
+
+
+## ¿Está siguiendo al jugador? Hace falta ser amigos (2 corazones) y habérselo pedido.
+func is_following() -> bool:
+	return data.get("follow", false) and hearts() >= Items.HEARTS_FRIEND and not is_npc()
+
+
+func set_following(on: bool) -> void:
+	data["follow"] = on
+	if on:
+		state = State.IDLE
+	else:
+		home = body.pos
+
+
+## Dice que no con la cabeza (cuando le ofrecen algo que no quiere).
+func shake_head() -> void:
+	_shake_time = 0.6
+
+
+## Seguir al jugador: va hacia él y se detiene cerca. No entra al agua (salvo el pato) ni
+## se tira de bordes altos; si queda lejos, el modo juego lo trae a una celda cercana.
+func _follow_tick(delta: float, world: VoxelWorld, props: PropLayer, to_player: Vector3,
+		player_dist: float) -> void:
+	var is_duck: bool = type == CharacterLibrary.DUCK
+	var dir := Vector3.ZERO
+	var jump: bool = false
+	var speed: float = 0.0
+	if player_dist > FOLLOW_STOP_DISTANCE and player_dist < INF:
+		speed = clampf(player_dist * 2.2, CharacterLibrary.WALK_SPEED[type], FOLLOW_MAX_SPEED)
+		var straight: Vector3 = to_player.normalized()
+		for turn: float in [0.0, 0.8, -0.8, 1.5, -1.5]:
+			var candidate: Vector3 = straight.rotated(Vector3.UP, turn)
+			var ahead: int = look_ahead(world, candidate, is_duck)
+			if ahead != AHEAD_BLOCKED:
+				dir = candidate
+				jump = ahead == AHEAD_STEP_UP
+				break
+	body.vel.x = dir.x * speed
+	body.vel.z = dir.z * speed
+	var floating: bool = is_duck and _duck_float(world, delta)
+	if dir != Vector3.ZERO:
+		if jump and (body.on_ground or floating):
+			body.vel.y = STEP_JUMP_SPEED
+			body.use_gravity = true
+		elif type == CharacterLibrary.RABBIT and body.on_ground:
+			body.vel.y = HOP_SPEED
+		yaw = lerp_angle(yaw, atan2(dir.x, dir.z), clampf(delta * 9.0, 0.0, 1.0))
+	var before: Vector3 = body.pos
+	body.step(world, props, delta)
+	if not _has_floor(world, body.pos, is_duck):
+		body.pos.x = before.x
+		body.pos.z = before.z
+	# Su lugar es donde esté: cuando deje de seguir, se queda paseando por ahí.
+	home = body.pos
+	rig.animate(delta, Vector2(body.vel.x, body.vel.z).length())
 	_sync()
 
 
@@ -278,6 +359,10 @@ func tick(delta: float, world: VoxelWorld, props: PropLayer, player_pos: Vector3
 	if absf(player_pos.y - body.pos.y) > 3.0:
 		player_dist = INF
 
+	if _shake_time > 0.0:
+		_shake_time -= delta
+		rig.head_yaw = sin(_shake_time * 26.0) * 0.55 if _shake_time > 0.0 else 0.0
+
 	if is_npc():
 		# El aldeano no se mueve: gira hacia el jugador si está cerca.
 		var wanted: float = _base_yaw
@@ -288,11 +373,22 @@ func tick(delta: float, world: VoxelWorld, props: PropLayer, player_pos: Vector3
 		_sync()
 		return
 
+	if is_following():
+		_follow_tick(delta, world, props, to_player, player_dist)
+		return
+
 	var is_duck: bool = type == CharacterLibrary.DUCK
 	var speed: float = CharacterLibrary.WALK_SPEED[type]
 	var dir := Vector3.ZERO
 
-	if CharacterLibrary.FLEES[type] and player_dist < FLEE_DISTANCE and state != State.FLEE:
+	# Con tres corazones, de vez en cuando da un saltito de alegría cerca del jugador.
+	if hearts() >= Items.HEARTS_BEST and player_dist < 6.0 and body.on_ground and state == State.IDLE \
+			and rng.randf() < delta * 0.5:
+		body.vel.y = HAPPY_HOP_SPEED
+
+	# Con un corazón ya no le tiene miedo al jugador.
+	if CharacterLibrary.FLEES[type] and hearts() < Items.HEARTS_NO_FLEE and player_dist < FLEE_DISTANCE \
+			and state != State.FLEE:
 		state = State.FLEE
 		_timer = 1.6
 		_flee_dir = -to_player.normalized() if player_dist > 0.05 else Vector3(1.0, 0.0, 0.0)

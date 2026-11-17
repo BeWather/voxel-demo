@@ -1,7 +1,9 @@
 class_name PlayMode
 extends Node3D
 ## Modo juego: jugador en tercera persona, cámara que lo sigue, animales que deambulan,
-## aldeanos con diálogo y un HUD mínimo. Nunca modifica bloques, props ni criaturas.
+## aldeanos con diálogo, monturas, y juntar cosas para hacerse amiga de los animales
+## (ver PlayFriends). Nunca modifica bloques ni props; de las criaturas solo cambia su
+## progreso de amistad (corazones, nombre, seguir), que no es una edición del mapa.
 
 ## El jugador pidió volver al editor (Esc o el botón del HUD).
 signal exit_requested
@@ -16,7 +18,7 @@ const CAMERA_MARGIN: float = 0.35
 ## Solo se simulan las criaturas a esta distancia horizontal del jugador (en bloques).
 const SIMULATION_RADIUS: float = 48.0
 const HINT: String = "WASD: moverse · Shift: correr · Espacio: saltar / nadar · Mouse: cámara · " \
-		+ "Rueda: zoom · E: hablar / montar · Esc: volver al editor"
+		+ "E: hablar / montar / juntar · F: dar de comer · G: seguir · 1–6: elegir · Esc: editor"
 const RIDE_HINT: String = "WASD: dirigir · Shift: galopar · Espacio: saltar · E: bajar · Mouse: cámara · " \
 		+ "Rueda: zoom · Esc: volver al editor"
 const DRAGON_HINT: String = "WASD: dirigir · Espacio: despegar y subir · C: bajar · Shift: más rápido · " \
@@ -27,6 +29,9 @@ const MOUNT_DISTANCE: float = 2.6
 const RIDE_CAMERA_FACTOR: float = 1.3
 const FLY_CAMERA_FACTOR: float = 1.9
 const NOTICE_SECONDS: float = 2.5
+## Aviso al querer montar un unicornio o un dragón que todavía no es amigo.
+const BEFRIEND_FIRST: String = "Hazte su amiga primero"
+const PROMPT_SEPARATOR: String = "    ·    "
 
 var world: VoxelWorld
 var props: PropLayer
@@ -42,6 +47,8 @@ var cam_distance: float = 7.0
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 ## Criaturas simuladas en el último paso (las que estaban cerca del jugador).
 var simulated_count: int = 0
+## Juntar cosas, mochila y amistad con los animales.
+var friends: PlayFriends
 
 var _keys: Dictionary[int, bool] = {}
 var _capture_mouse: bool = false
@@ -54,6 +61,8 @@ var _camera_factor: float = 1.0
 var _notice: String = ""
 var _notice_time: float = 0.0
 var _hint_label: Label
+var _hud_root: Control
+var _backpack_hud: BackpackHud
 
 var _hud_layer: CanvasLayer
 var _prompt_label: Label
@@ -81,6 +90,9 @@ func _init() -> void:
 	play_camera.near = 0.08
 	play_camera.far = 600.0
 	add_child(play_camera)
+	friends = PlayFriends.new()
+	friends.setup(self)
+	add_child(friends)
 	_build_hud()
 
 
@@ -110,6 +122,16 @@ func start(avatar: int, spawn: Vector3, capture_mouse: bool = true) -> void:
 	_dialog_panel.visible = false
 	_prompt_label.visible = false
 	play_camera.current = true
+	friends.start()
+	if _backpack_hud == null:
+		_backpack_hud = BackpackHud.new()
+		_backpack_hud.setup(friends.icons)
+		_backpack_hud.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+		_backpack_hud.offset_left = -200
+		_backpack_hud.offset_right = 200
+		_backpack_hud.offset_top = -90
+		_backpack_hud.offset_bottom = -38
+		_hud_root.add_child(_backpack_hud)
 	_update_camera()
 
 
@@ -120,6 +142,7 @@ func stop() -> void:
 		var ridden: EntityActor = player.mount
 		player.dismount_to(player.body.pos, player.yaw)
 		ridden.end_ride()
+	friends.stop()
 	active = false
 	player.visible = false
 	_hud_layer.visible = false
@@ -130,8 +153,23 @@ func stop() -> void:
 	play_camera.current = false
 
 
+## ¿Hay algo abierto que deja quieto al jugador? (un diálogo o la ventana de poner nombre)
 func is_dialog_open() -> bool:
-	return _dialog_actor != null
+	return _dialog_actor != null or friends.naming_actor != null
+
+
+func captures_mouse() -> bool:
+	return _capture_mouse
+
+
+func hud_root() -> Control:
+	return _hud_root
+
+
+## Muestra un aviso corto en el lugar de los carteles de "E: …".
+func show_notice(text: String) -> void:
+	_notice = text
+	_notice_time = NOTICE_SECONDS
 
 
 # ================================================================ entrada
@@ -161,8 +199,17 @@ func _input(event: InputEvent) -> void:
 			if key.keycode == KEY_ESCAPE:
 				get_viewport().set_input_as_handled()
 				exit_requested.emit()
+			elif friends.naming_actor != null:
+				# Se está escribiendo un nombre: las letras no son órdenes.
+				pass
 			elif key.keycode == KEY_E:
 				interact()
+			elif key.keycode == KEY_F:
+				friends.feed()
+			elif key.keycode == KEY_G:
+				friends.toggle_follow()
+			elif key.keycode >= KEY_1 and key.keycode <= KEY_6:
+				friends.selected = key.keycode - KEY_1
 
 
 func _held(keycode: Key) -> bool:
@@ -243,9 +290,11 @@ func simulate(delta: float, wish: Vector3, jump: bool, run: bool, descend: bool 
 			_nearby_mount = null
 		else:
 			_nearby_npc = null
+	friends.tick(delta)
 
 
-## Tecla E: avanza el diálogo abierto, baja de la montura, o habla / monta lo que esté cerca.
+## Tecla E: avanza el diálogo abierto o baja de la montura; si no, por orden de prioridad,
+## habla con el aldeano cercano, monta la criatura cercana o junta lo que haya al alcance.
 func interact() -> void:
 	if _dialog_actor != null:
 		_dialog_index += 1
@@ -253,12 +302,18 @@ func interact() -> void:
 		if _dialog_index >= lines.size():
 			_dialog_actor = null
 		return
+	if friends.naming_actor != null:
+		return
 	if player.mount != null:
 		dismount()
 	elif _nearby_npc != null:
 		open_dialog(_nearby_npc)
-	elif _nearby_mount != null:
+	elif _nearby_mount != null and friends.can_mount(_nearby_mount):
 		mount(_nearby_mount)
+	elif not friends.nearby_gather.is_empty():
+		friends.gather()
+	elif _nearby_mount != null:
+		show_notice(BEFRIEND_FIRST)
 
 
 func is_mounted() -> bool:
@@ -267,7 +322,7 @@ func is_mounted() -> bool:
 
 ## Sube al jugador a una criatura montable.
 func mount(actor: EntityActor) -> bool:
-	if actor == null or not actor.is_rideable() or player.mount != null:
+	if actor == null or not actor.is_rideable() or player.mount != null or not friends.can_mount(actor):
 		return false
 	player.mount = actor
 	actor.start_ride()
@@ -349,6 +404,7 @@ func _build_hud() -> void:
 	_hud_layer.visible = false
 	add_child(_hud_layer)
 	var root := Control.new()
+	_hud_root = root
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.theme = EditorUI.make_theme()
@@ -376,10 +432,10 @@ func _build_hud() -> void:
 
 	_prompt_label = Label.new()
 	_prompt_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
-	_prompt_label.offset_left = -300
-	_prompt_label.offset_right = 300
-	_prompt_label.offset_top = -92
-	_prompt_label.offset_bottom = -62
+	_prompt_label.offset_left = -460
+	_prompt_label.offset_right = 460
+	_prompt_label.offset_top = -128
+	_prompt_label.offset_bottom = -98
 	_prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_prompt_label.add_theme_font_size_override("font_size", 18)
 	_prompt_label.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
@@ -432,6 +488,7 @@ func _update_hud() -> void:
 		_dialog_panel.visible = true
 		_prompt_label.visible = false
 		_dialog_name.text = _dialog_actor.display_name()
+		_backpack_hud.visible = false
 		if lines.is_empty():
 			_dialog_text.text = "..."
 		else:
@@ -441,6 +498,9 @@ func _update_hud() -> void:
 				mini(_dialog_index + 1, maxi(lines.size(), 1)), maxi(lines.size(), 1)]
 		return
 	_dialog_panel.visible = false
+	_backpack_hud.visible = true
+	_backpack_hud.refresh(friends.backpack)
+	_backpack_hud.select(friends.selected)
 	var prompt: String = prompt_text()
 	_prompt_label.text = prompt
 	_prompt_label.visible = not prompt.is_empty()
@@ -452,8 +512,25 @@ func prompt_text() -> String:
 		return ""
 	if _notice_time > 0.0:
 		return _notice
+	# El cartel siempre dice qué hace cada tecla ahora: E (hablar, montar o juntar), F (dar
+	# de comer o acariciar a la criatura cercana) y G (que la siga o se quede).
+	var parts: Array[String] = []
 	if _nearby_npc != null:
-		return "E: hablar con %s" % _nearby_npc.display_name()
-	if _nearby_mount != null:
-		return "E: montar (%s)" % _nearby_mount.display_name().to_lower()
-	return ""
+		parts.append("E: hablar con %s" % _nearby_npc.display_name())
+	elif _nearby_mount != null and friends.can_mount(_nearby_mount):
+		parts.append("E: montar (%s)" % _nearby_mount.display_name().to_lower())
+	elif not friends.nearby_gather.is_empty():
+		var item: int = friends.nearby_gather["item"]
+		parts.append("E: juntar %s" % Items.NAMES[item])
+	elif _nearby_mount != null:
+		parts.append(BEFRIEND_FIRST)
+	var creature: EntityActor = friends.nearby_creature
+	if creature != null:
+		var food: int = friends.food_for(creature)
+		if food >= 0:
+			parts.append("F: dar %s" % Items.NAMES[food])
+		else:
+			parts.append("F: acariciar")
+		if creature.hearts() >= Items.HEARTS_FRIEND:
+			parts.append("G: que se quede" if creature.is_following() else "G: que te siga")
+	return PROMPT_SEPARATOR.join(parts)

@@ -167,7 +167,8 @@ func _test_riding() -> void:
 	entities.set_entity(pony_cell, EntityLayer.make_entity(CharacterLibrary.PONY, 1, 1))
 	entities.set_entity(Vector3i(20, 4, 20), EntityLayer.make_entity(CharacterLibrary.SHEEP, 0, 0))
 	entities.set_entity(Vector3i(24, 4, 30), EntityLayer.make_entity(CharacterLibrary.VILLAGER, 0, 0, "Ramón", ["Hola."]))
-	entities.set_entity(Vector3i(26, 4, 30), EntityLayer.make_entity(CharacterLibrary.UNICORN, 0, 0))
+	# El unicornio ya es amigo (2 corazones): si no, no se deja montar.
+	entities.set_entity(Vector3i(26, 4, 30), EntityLayer.make_entity(CharacterLibrary.UNICORN, 0, 0, "", [], 8))
 	var before: Dictionary = MapIO.serialize(world, props, 0, entities)
 	var pony: EntityActor = entities.get_actor(pony_cell)
 	var play: PlayMode = _new_play(world, props, entities)
@@ -312,7 +313,7 @@ func _test_dragon_flight() -> void:
 	props.set_prop(Vector3i(26, 4, 12), PropLayer.make_prop(PropLibrary.OAK, 0, 0))
 	var entities: EntityLayer = _new_entities()
 	var cell := Vector3i(20, 4, 12)
-	entities.set_entity(cell, EntityLayer.make_entity(CharacterLibrary.DRAGON, 1, 1))
+	entities.set_entity(cell, EntityLayer.make_entity(CharacterLibrary.DRAGON, 1, 1, "", [], 8))
 	var dragon: EntityActor = entities.get_actor(cell)
 	var play: PlayMode = _new_play(world, props, entities)
 	play.start(0, Vector3(21.8, 4.0, 12.5), false)

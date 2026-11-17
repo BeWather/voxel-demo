@@ -58,6 +58,7 @@ var _load_dialog: FileDialog
 var _error_dialog: AcceptDialog
 var _message_timer: Timer
 var _hint_label: Label
+var _unsaved_label: Label
 var _hint_timer: Timer
 var _open_modals: int = 0
 
@@ -152,6 +153,24 @@ func set_status(text: String) -> void:
 
 func set_seed(map_seed: int) -> void:
 	_seed_label.text = "Semilla: %d" % map_seed
+
+
+## Marca en la barra superior que hay cambios sin guardar (ediciones o progreso del juego).
+func set_unsaved(unsaved: bool) -> void:
+	if _unsaved_label == null:
+		_unsaved_label = Label.new()
+		_unsaved_label.text = "● Sin guardar"
+		_unsaved_label.tooltip_text = "Hay cambios o progreso del juego que todavía no se guardaron"
+		_unsaved_label.mouse_filter = Control.MOUSE_FILTER_PASS
+		_unsaved_label.add_theme_color_override("font_color", Color(1.0, 0.72, 0.30))
+		var row: Node = _seed_label.get_parent()
+		row.add_child(_unsaved_label)
+		row.move_child(_unsaved_label, _seed_label.get_index() + 1)
+	_unsaved_label.visible = unsaved
+
+
+func is_unsaved_shown() -> bool:
+	return _unsaved_label != null and _unsaved_label.visible
 
 
 func set_history(can_undo: bool, can_redo: bool) -> void:

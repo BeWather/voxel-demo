@@ -6,6 +6,7 @@ const PlayTests := preload("res://tests/selftest_play.gd")
 const ObjectTests := preload("res://tests/selftest_objects.gd")
 const SizeTests := preload("res://tests/selftest_sizes.gd")
 const RideTests := preload("res://tests/selftest_ride.gd")
+const FriendTests := preload("res://tests/selftest_friends.gd")
 
 var _failures: int = 0
 var _checks: int = 0
@@ -37,6 +38,11 @@ func _initialize() -> void:
 	ride_tests.run(self)
 	_checks += ride_tests.checks
 	_failures += ride_tests.failures
+	# Juntar, mochila, amistad y mapa versión 3 (tests/selftest_friends.gd).
+	var friend_tests := FriendTests.new()
+	friend_tests.run(self)
+	_checks += friend_tests.checks
+	_failures += friend_tests.failures
 	print("")
 	if _failures == 0:
 		print("AUTOPRUEBA OK: %d comprobaciones." % _checks)

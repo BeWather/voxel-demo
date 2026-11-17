@@ -5,7 +5,8 @@ extends Node3D
 ## Argumentos de usuario (después de "--"):
 ##   --shot=<ruta png absoluta>   guarda una captura y cierra.
 ##   --shot-mode=<modo>           qué capturar: editor (por defecto), selector, play, dialogo,
-##                                montando (una niña sobre un poni) o volando (sobre el dragón).
+##                                montando (una niña sobre un poni), volando (sobre el dragón)
+##                                o amistad (mochila, corazones y un animal que la sigue).
 ##   --shot-size=<ancho>x<alto>   tamaño de la ventana para la captura.
 ##   --seed=<entero>              semilla de la pradera inicial.
 ##   --size=<S|M|L>               tamaño del mapa inicial (S por defecto).
@@ -47,6 +48,13 @@ var new_dialog: NewMapDialog
 var last_load_msec: int = 0
 ## Capturar el mouse al jugar. Las pruebas automáticas lo apagan para no mover el cursor real.
 var capture_mouse_in_play: bool = true
+## Mochila del modo juego. Se guarda con el mapa; "Nuevo" la vacía.
+var backpack: Dictionary = Items.empty_backpack()
+## Hay ediciones o progreso del juego que todavía no se guardaron en un archivo.
+var unsaved: bool = false
+
+var _close_dialog: ConfirmationDialog
+var _quit_after_save: bool = false
 
 var _modal_open: bool = false
 var _new_dialog_open: bool = false
@@ -169,6 +177,12 @@ func _ready() -> void:
 	selector.chosen.connect(_on_avatar_chosen)
 	selector.cancelled.connect(_on_selector_cancelled)
 	play.exit_requested.connect(stop_play)
+	# La mochila es una sola: la que se guarda con el mapa.
+	play.friends.backpack = backpack
+	play.friends.progress_changed.connect(mark_unsaved)
+	controller.edited.connect(mark_unsaved)
+	# Al cerrar la ventana con cambios sin guardar, se pregunta antes de salir.
+	get_tree().auto_accept_quit = false
 	ui.object_editor_requested.connect(open_object_editor)
 	object_ui.back_requested.connect(close_object_editor)
 	object_ui.modal_changed.connect(_on_modal_changed)
@@ -314,6 +328,9 @@ func _new_map(map_seed: int, size_key: String = "") -> void:
 	current_seed = map_seed
 	# El historial apunta al mapa viejo: se vacía antes de reemplazarlo.
 	controller.clear_history()
+	# Un mapa nuevo empieza sin progreso: mochila vacía y nada pendiente de guardar.
+	_set_backpack({})
+	_set_unsaved(false)
 	world.clear(Vector3i(side, world.size_y, side))
 	_generator = MeadowGenerator.new(world, props, map_seed, entities)
 	ui.set_seed(map_seed)
@@ -451,11 +468,76 @@ func _on_new_dialog_visibility() -> void:
 
 
 func _on_save_path(path: String) -> void:
-	var error: String = MapIO.save_file(path, world, props, current_seed, entities)
+	var error: String = MapIO.save_file(path, world, props, current_seed, entities, backpack)
 	if error.is_empty():
 		ui.show_message("Mapa guardado: %s" % path.get_file())
+		_set_unsaved(false)
+		if _quit_after_save:
+			get_tree().quit()
 	else:
+		_quit_after_save = false
 		ui.show_error(error)
+
+
+# ================================================================ cambios sin guardar
+
+func mark_unsaved() -> void:
+	_set_unsaved(true)
+
+
+func _set_unsaved(value: bool) -> void:
+	unsaved = value
+	ui.set_unsaved(value)
+
+
+## Reemplaza el contenido de la mochila sin cambiar el diccionario (lo comparte el juego).
+func _set_backpack(contents: Dictionary) -> void:
+	for key: String in Items.KEYS:
+		backpack[key] = int(contents.get(key, 0))
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		request_quit()
+
+
+## Cerrar la ventana: si hay cambios sin guardar, pregunta Guardar / Salir sin guardar / Cancelar.
+func request_quit() -> void:
+	if not unsaved or not _shot_path.is_empty():
+		get_tree().quit()
+		return
+	if mode == Mode.PLAY:
+		stop_play()
+	elif mode == Mode.SELECT:
+		_on_selector_cancelled()
+	elif mode == Mode.OBJECTS:
+		close_object_editor()
+	if _close_dialog == null:
+		_close_dialog = ConfirmationDialog.new()
+		_close_dialog.title = "Cambios sin guardar"
+		_close_dialog.dialog_text = "Hay cambios o progreso del juego sin guardar.\n¿Qué quieres hacer?"
+		_close_dialog.ok_button_text = "Guardar"
+		_close_dialog.cancel_button_text = "Cancelar"
+		_close_dialog.add_button("Salir sin guardar", true, "salir")
+		_close_dialog.confirmed.connect(_on_close_save)
+		_close_dialog.custom_action.connect(_on_close_action)
+		_close_dialog.canceled.connect(func() -> void: _quit_after_save = false)
+		ui.add_child(_close_dialog)
+	_close_dialog.popup_centered()
+
+
+func is_close_dialog_open() -> bool:
+	return _close_dialog != null and _close_dialog.visible
+
+
+func _on_close_save() -> void:
+	_quit_after_save = true
+	ui.open_save_dialog()
+
+
+func _on_close_action(action: StringName) -> void:
+	if action == &"salir":
+		get_tree().quit()
 
 
 func _on_load_path(path: String) -> void:
@@ -474,6 +556,9 @@ func _on_load_path(path: String) -> void:
 		return
 	current_seed = result["seed"]
 	controller.clear_history()
+	var loaded_bag: Dictionary = result["backpack"]
+	_set_backpack(loaded_bag)
+	_set_unsaved(false)
 	_frame_camera()
 	ui.set_seed(current_seed)
 	var loaded_key: String = AppConfig.key_for_side(world.size_x) if world.size_x == world.size_z else ""
@@ -617,6 +702,8 @@ func _run_shot_script() -> void:
 				_stage_play_shot(_shot_mode == "dialogo")
 			"montando", "volando":
 				_stage_ride_shot(_shot_mode == "volando")
+			"amistad":
+				_stage_friend_shot()
 	elif _shot_stage == 1 and (_shot_mode == "editor" or _frames >= SHOT_SETTLE_FRAMES):
 		_shot_stage = 2
 		_take_shot()
@@ -708,6 +795,42 @@ func _stage_ride_shot(in_flight: bool) -> void:
 		play.cam_yaw = 0.85
 		play.cam_pitch = 0.28
 		play.cam_distance = 4.2
+
+
+## Prepara la captura de amistad: una oveja amiga con nombre que sigue a la niña, un poni
+## con un corazón, un conejo que todavía no la conoce y algunas cosas en la mochila.
+func _stage_friend_shot() -> void:
+	@warning_ignore("integer_division")
+	var centre := Vector2i(world.size_x / 2, world.size_z / 2)
+	var cell := Vector3i(-1, -1, -1)
+	for radius: int in 24:
+		for dz: int in range(-radius, radius + 1):
+			for dx: int in range(-radius, radius + 1):
+				if cell.x >= 0 or maxi(absi(dx), absi(dz)) != radius:
+					continue
+				var candidate := Vector3i(centre.x + dx, world.column_height(centre.x + dx, centre.y + dz), centre.y + dz)
+				# Hace falta lugar llano para la niña y los tres animales.
+				var flat: bool = true
+				for spot: Vector3i in [Vector3i.ZERO, Vector3i(-2, 0, -1), Vector3i(2, 0, 2), Vector3i(-1, 0, 3),
+						Vector3i(-1, 0, 0), Vector3i(0, 0, 1), Vector3i(1, 0, 1)]:
+					if not controller.is_free_cell(candidate + spot):
+						flat = false
+				if flat:
+					cell = candidate
+	if cell.x < 0:
+		return
+	entities.set_entity(cell + Vector3i(-2, 0, -1), EntityLayer.make_entity(CharacterLibrary.SHEEP, 0, 0, "Nube", [], 9, true))
+	entities.set_entity(cell + Vector3i(2, 0, 2), EntityLayer.make_entity(CharacterLibrary.PONY, 2, 3, "", [], 4))
+	entities.set_entity(cell + Vector3i(-1, 0, 3), EntityLayer.make_entity(CharacterLibrary.RABBIT, 0, 2))
+	_set_backpack({"flor_roja": 2, "flor_amarilla": 5, "hongo": 1, "pasto": 7, "manzana": 3})
+	avatar = 0
+	mode = Mode.SELECT
+	start_play(Vector3(cell.x + 0.5, cell.y, cell.z + 0.5), false)
+	play.friends.selected = Items.APPLE
+	play.player.yaw = 0.3
+	play.cam_yaw = 3.5
+	play.cam_pitch = 0.42
+	play.cam_distance = 5.2
 
 
 func _take_shot() -> void:

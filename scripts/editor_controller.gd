@@ -6,6 +6,8 @@ extends Node3D
 signal tool_changed(tool: int)
 signal history_changed(can_undo: bool, can_redo: bool)
 signal status_changed(text: String)
+## El mapa cambió por una edición (un trazo, deshacer o rehacer).
+signal edited
 ## Se hizo clic sobre un aldeano con la herramienta "colocar criatura".
 signal npc_edit_requested(cell: Vector3i)
 
@@ -269,6 +271,7 @@ func end_stroke() -> void:
 		_undo.pop_front()
 	_redo.clear()
 	_emit_history()
+	edited.emit()
 
 
 ## Deja solo las entradas [anterior, nuevo] donde realmente hubo cambio.
@@ -361,6 +364,7 @@ func undo() -> void:
 	_restore(step, 0)
 	_redo.append(step)
 	_emit_history()
+	edited.emit()
 
 
 func redo() -> void:
@@ -370,6 +374,7 @@ func redo() -> void:
 	_restore(step, 1)
 	_undo.append(step)
 	_emit_history()
+	edited.emit()
 
 
 func clear_history() -> void:
@@ -393,11 +398,36 @@ func _restore(step: Dictionary, side: int) -> void:
 		var data: Dictionary = entry[side]
 		props.set_prop(cell, data)
 	var entity_changes: Dictionary = step["entities"]
+	if entities == null:
+		return
+	# La amistad (corazones, nombre de un animal, seguir) es progreso del juego, no una
+	# edición: si este paso vuelve a ubicar una criatura que está ahora en el mapa (por
+	# ejemplo, al deshacer un "mover"), conserva el progreso que tiene en este momento.
+	var current: Array[Dictionary] = []
+	for cell: Vector3i in entity_changes:
+		if entities.has_entity(cell):
+			current.append(entities.get_entity(cell))
 	for cell: Vector3i in entity_changes:
 		var entry: Array = entity_changes[cell]
 		var data: Dictionary = entry[side]
-		if entities != null:
-			entities.set_entity(cell, data)
+		if not data.is_empty():
+			data = _with_current_progress(data, current)
+		entities.set_entity(cell, data)
+
+
+## Devuelve `data` con el progreso de la criatura equivalente de `current`, si hay una.
+static func _with_current_progress(data: Dictionary, current: Array[Dictionary]) -> Dictionary:
+	for other: Dictionary in current:
+		if other["type"] != data["type"] or other["variant"] != data["variant"] or other["lines"] != data["lines"]:
+			continue
+		var merged: Dictionary = data.duplicate(true)
+		merged["friendship"] = other.get("friendship", 0)
+		merged["follow"] = other.get("follow", false)
+		# El nombre de un aldeano se edita en el mapa; el de un animal se lo pone el jugador.
+		if data["type"] != CharacterLibrary.VILLAGER:
+			merged["name"] = other["name"]
+		return merged
+	return data
 
 
 func _emit_history() -> void:
@@ -999,6 +1029,11 @@ func _refresh_status() -> void:
 			detail = "pincel %d" % brush
 		_:
 			detail = "%s · pincel %d" % [Blocks.block_name(block_id), brush]
+	# Sobre una criatura con nombre, se muestra cómo se llama.
+	if _has_hover and entities != null and entities.has_entity(_hover_cell):
+		var hovered_name: String = entities.entities[_hover_cell]["name"]
+		if not hovered_name.is_empty():
+			detail += " · «%s»" % hovered_name
 	var text: String = "%s   |   %s: %s" % [cell_text, TOOL_NAMES[tool], detail]
 	if text != _last_status:
 		_last_status = text

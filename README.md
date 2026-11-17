@@ -32,7 +32,7 @@ Argumentos opcionales (después de `--`):
 | `--size=<S\|M\|L>` | Tamaño del mapa inicial: S 64 × 64 (por defecto), M 128 × 128, L 256 × 256. |
 | `--ui-scale=<número>` | Fuerza la escala de la interfaz (por defecto se calcula según el alto de la ventana). |
 | `--shot=<ruta png absoluta>` | Guarda una captura a los ~30 frames y cierra. |
-| `--shot-mode=<modo>` | Qué capturar con `--shot`: `editor` (por defecto), `selector`, `play`, `dialogo`, `montando` o `volando`. |
+| `--shot-mode=<modo>` | Qué capturar con `--shot`: `editor` (por defecto), `selector`, `play`, `dialogo`, `montando`, `volando` o `amistad`. |
 | `--shot-size=<ancho>x<alto>` | Tamaño de la ventana para la captura, por ejemplo `--shot-size=1920x1080`. |
 | `--objects` | Arranca en el editor de objetos (se puede combinar con `--shot`). |
 | `--object=<clave>` | Arranca en el editor de objetos con ese objeto abierto, por ejemplo `--object=roble`. |
@@ -178,6 +178,10 @@ mapa si se usó el botón), sobre el bloque más alto y en una celda seca si hay
 | Girar la cámara | Mover el mouse (queda capturado mientras se juega) |
 | Zoom de la cámara | Rueda del mouse |
 | Hablar con un aldeano cercano / avanzar el diálogo | E |
+| Juntar una flor, un hongo, pasto alto o una manzana | E |
+| Dar de comer o acariciar al animal cercano | F |
+| Pedirle a un animal amigo que la siga o que se quede | G |
+| Elegir un casillero de la mochila | 1 a 6 |
 | Montar un poni, unicornio, dragón o vaca cercano / bajar | E |
 | Volver al editor | Esc |
 
@@ -195,6 +199,62 @@ mapa si se usó el botón), sobre el bloque más alto y en una celda seca si hay
   jugador queda quieto.
 - El modo juego nunca modifica el mapa. Al volver al editor las criaturas regresan a su celda y
   la cámara del editor queda donde estaba.
+
+### Juntar y la mochila
+
+Con **E** se junta lo que haya al alcance: flores (roja, amarilla, azul), hongos, pasto alto y
+la **manzana** que cuelga de cada roble. Lo juntado desaparece de la vista y vuelve a crecer
+solo entre 60 y 90 segundos después. Juntar no cambia el mapa: al volver al editor todo está
+como se lo dejó.
+
+La mochila es la fila de casilleros de abajo: un ícono por cosa, con la cantidad (hasta 20 de
+cada una). Las teclas **1 a 6** eligen un casillero; al juntar algo, su casillero da un
+saltito y queda elegido.
+
+### Amistad con los animales
+
+Con **F** se le da de comer al animal que está al lado. Sobre cada animal cercano se ven sus
+**corazones** (de 0 a 3) y un globo con el dibujo de su comida preferida.
+
+| Animal | Comida preferida (+1 corazón) | También acepta (+medio corazón) |
+| --- | --- | --- |
+| Oveja | pasto | flor amarilla |
+| Vaca | pasto | manzana |
+| Cerdo | manzana | hongo |
+| Gallina | hongo | manzana |
+| Conejo | flor amarilla | flor roja, flor azul |
+| Pato | pasto | flor azul |
+| Zorro | hongo | manzana |
+| Poni | manzana | pasto |
+| Unicornio | manzana | flor azul |
+| Dragón | hongo | flor roja |
+
+- F le da su comida preferida si está en la mochila; si no, otra que acepte. Si lo elegido no
+  le gusta, dice que no con la cabeza y no se gasta. Con las manos vacías, F lo **acaricia**:
+  suma un poquito (un cuarto de corazón) y hay que esperar unos segundos para repetir.
+- **1 corazón**: gallina, conejo y zorro dejan de huir.
+- **2 corazones** (amigos): se ofrece **ponerle nombre** (Aceptar / Más tarde); el nombre se ve
+  sobre el animal. Con **G** se le pide que la siga o que se quede. Los seguidores (hasta 4)
+  acompañan al jugador aunque corra, no entran al agua (el pato sí) y, si quedan muy atrás o
+  no pueden llegar, aparecen en una celda libre cercana; después de volar en dragón, al
+  aterrizar. El **unicornio** y el **dragón** solo se dejan montar por una amiga: antes, E
+  muestra "Hazte su amiga primero". El poni y la vaca se montan como siempre.
+- **3 corazones**: el animal da saltitos de alegría cuando el jugador está cerca.
+- El cartel sobre la mochila dice siempre qué hace cada tecla en ese momento, por ejemplo
+  "E: juntar manzana · F: dar pasto · G: que te siga". E elige, en este orden: hablar con un
+  aldeano, montar, juntar.
+
+La amistad, los nombres, quién sigue y la mochila son **progreso**: no se deshacen con
+Ctrl+Z, se conservan al volver al editor y se guardan con el mapa al usar **Guardar**. Mover un
+animal conserva su amistad y su nombre; borrarlo los pierde (y deshacer el borrado los
+devuelve). En el editor, al pasar el mouse sobre un animal con nombre, la línea de estado lo
+muestra. **Nuevo** empieza sin progreso.
+
+Cuando hay ediciones o progreso sin guardar, la barra superior muestra **● Sin guardar**. Al
+cerrar la ventana en ese estado se pregunta: Guardar, Salir sin guardar o Cancelar. Nunca se
+guarda solo ni se pisa un archivo sin pedirlo.
+
+![Amistad](docs/captura_amistad.png)
 
 ### Montar
 
@@ -305,6 +365,10 @@ scripts/
   play_mode.gd              Modo juego: cámara en tercera persona, HUD, diálogos.
   avatar_selector.gd        Pantalla de selección de avatar.
   user_settings.gd          Ajustes guardados en user://ajustes.cfg.
+  items.gd                  Cosas que se juntan, comida de cada animal, puntos de amistad, íconos.
+  play_friends.gd           Juntar, mochila, dar de comer, seguidores y nombres en modo juego.
+  entity_overhead.gd        Corazones, globo de comida y nombre sobre cada criatura.
+  backpack_hud.gd           Fila de la mochila en pantalla.
   app_config.gd             Tamaños de mapa y escala de la interfaz.
   new_map_dialog.gd         Diálogo de "Nuevo": tamaño y semilla.
   busy_overlay.gd           Cartel de progreso al generar o cargar un mapa grande.
@@ -315,6 +379,10 @@ tests/
   interaction_test.gd       Prueba con eventos de entrada sintéticos (necesita ventana).
   selftest_sizes.gd         Parte de la autoprueba: tamaños S/M/L, mallado por partes, mapas grandes.
   selftest_ride.gd          Parte de la autoprueba: salir del agua, monturas, vuelo, herramienta mover.
+  selftest_friends.gd       Parte de la autoprueba: juntar, mochila, amistad, seguidores, mapa v3.
+  selftest_friends_only.gd  Corre solo esa parte.
+  friends_check.gd          Comprobación con ventana de juntar, dar de comer, nombre, seguir y "sin guardar".
+  fixtures/mapa_v2.json     Mapa de la versión 2 para probar la compatibilidad.
   perf_bench.gd             Medición de tiempos y cuadros por segundo (necesita ventana).
   lineup_shot.gd            Captura de revisión con los personajes en fila.
   fixtures/mapa_v1.json     Mapa de la versión 1 para probar la compatibilidad.
@@ -330,6 +398,7 @@ docs/
   captura_criaturas.png     Adulto, niña, poni, unicornio, dragón y oveja (lineup_shot.gd --set=criaturas).
   captura_montando.png      Una niña montando un poni (--shot-mode=montando).
   captura_volando.png       Volando sobre el dragón (--shot-mode=volando).
+  captura_amistad.png       Mochila, corazones y una oveja amiga que sigue a la niña (--shot-mode=amistad).
   captura_objetos.png       Editor de objetos (--object=roble).
 ```
 
@@ -347,12 +416,14 @@ objetos usan carpetas temporales propias dentro de `user://` y las borran al ter
 
 ## Formato de mapa
 
-JSON con `format`, `version` (actualmente 2), `size` `[x, y, z]`, `seed`, `chunks` (posición de
+JSON con `format`, `version` (actualmente 3), `size` `[x, y, z]`, `seed`, `chunks` (posición de
 chunk y bloques comprimidos como pares `id, cantidad`), `props` (celda, id de texto, variante
-y rotación) y `entities` (celda, tipo de texto, variante, rotación y, para los aldeanos,
-`name` y `lines`). Los mapas de la versión 1 (sin `entities`) se siguen cargando. Un archivo
-con otra versión o con datos corruptos se rechaza con un mensaje y el mapa abierto no se
-modifica.
+y rotación), `entities` (celda, tipo de texto, variante, rotación, `name`, `lines` y, desde la
+versión 3, `friendship` de 0 a 12 y `follow`) y `backpack` (cantidad de cada cosa: `flor_roja`,
+`flor_amarilla`, `flor_azul`, `hongo`, `pasto`, `manzana`). Los mapas de la versión 1 (sin
+`entities`) y de la versión 2 (sin amistad ni mochila) se siguen cargando: los animales
+arrancan sin amistad y la mochila vacía. Un archivo con otra versión o con datos corruptos se
+rechaza con un mensaje y el mapa abierto no se modifica.
 
 Los props se guardan por la clave de texto de su objeto (`roble`, `arbol_seco`…). Si un mapa
 usa un objeto que no está en la biblioteca, se carga igual: esos props se omiten y la barra
@@ -415,3 +486,10 @@ Lo que se agregó sobre la primera versión:
 - **Monturas**: poni, unicornio, dragón y vaca se montan con E; el dragón vuela.
 - Herramienta **Mover** para cambiar de lugar props, animales y aldeanos.
 - **Ayudas** con ejemplo en cada herramienta y en la línea de estado.
+
+## Quinta versión
+
+- **Juntar** flores, hongos, pasto alto y manzanas, con una **mochila** en pantalla.
+- **Amistad** con los animales: comida preferida, corazones, nombre, seguidores.
+- Unicornio y dragón se montan solo siendo amigos.
+- **Formato de mapa versión 3** con el progreso; marca de "sin guardar" y pregunta al cerrar.

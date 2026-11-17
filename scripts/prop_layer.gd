@@ -28,6 +28,10 @@ var props: Dictionary[Vector3i, Dictionary] = {}
 var _by_mesh: Dictionary[int, Dictionary] = {}
 var _instances: Dictionary[int, MultiMeshInstance3D] = {}
 var _dirty: Dictionary[int, bool] = {}
+## Estado del modo juego, que no toca los datos del mapa: props juntados (ocultos hasta
+## que vuelven a crecer) y la escala de los que están creciendo.
+var _play_hidden: Dictionary[Vector3i, bool] = {}
+var _play_scale: Dictionary[Vector3i, float] = {}
 
 
 func _process(_delta: float) -> void:
@@ -95,6 +99,50 @@ func clear() -> void:
 		_dirty[key] = true
 	props.clear()
 	_by_mesh.clear()
+	_play_hidden.clear()
+	_play_scale.clear()
+
+
+# ---------------------------------------------------------------- modo juego
+
+## Oculta (o vuelve a mostrar) un prop sin sacarlo del mapa: es lo que pasa al juntarlo.
+func set_play_hidden(cell: Vector3i, hidden: bool) -> void:
+	if not props.has(cell) or _play_hidden.has(cell) == hidden:
+		return
+	if hidden:
+		_play_hidden[cell] = true
+	else:
+		_play_hidden.erase(cell)
+	_dirty[group_key(cell, props[cell])] = true
+
+
+func is_play_hidden(cell: Vector3i) -> bool:
+	return _play_hidden.has(cell)
+
+
+## Escala con la que se dibuja un prop (1 = normal). Se usa para que crezca de a poco.
+func set_play_scale(cell: Vector3i, amount: float) -> void:
+	if not props.has(cell):
+		return
+	if amount >= 0.999:
+		if not _play_scale.has(cell):
+			return
+		_play_scale.erase(cell)
+	else:
+		_play_scale[cell] = amount
+	_dirty[group_key(cell, props[cell])] = true
+
+
+## Al salir del modo juego todo vuelve a verse tal como está en el mapa.
+func clear_play_state() -> void:
+	for cell: Vector3i in _play_hidden:
+		if props.has(cell):
+			_dirty[group_key(cell, props[cell])] = true
+	for cell: Vector3i in _play_scale:
+		if props.has(cell):
+			_dirty[group_key(cell, props[cell])] = true
+	_play_hidden.clear()
+	_play_scale.clear()
 
 
 ## Marca para reconstruir todas las instancias de un prop (cuando cambia su modelo).
@@ -168,12 +216,18 @@ func _rebuild(key: int) -> void:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.mesh = library.get_mesh(id, mesh_id % PropLibrary.MAX_VARIANTS)
-	mm.instance_count = cells.size()
-	var i: int = 0
+	var shown: Array[Vector3i] = []
 	for cell: Vector3i in cells:
+		if not _play_hidden.has(cell):
+			shown.append(cell)
+	mm.instance_count = shown.size()
+	var i: int = 0
+	for cell: Vector3i in shown:
 		var rot: int = props[cell]["rot"]
 		var xform: Transform3D = cell_transform(cell, rot)
 		xform.origin -= origin
+		if _play_scale.has(cell):
+			xform.basis = xform.basis.scaled(Vector3.ONE * _play_scale[cell])
 		mm.set_instance_transform(i, xform)
 		i += 1
 	node.multimesh = mm

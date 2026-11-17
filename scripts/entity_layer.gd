@@ -4,8 +4,10 @@ extends Node3D
 ## sobre un bloque sólido, igual que los props.
 
 var library: CharacterLibrary
-## Clave: celda. Valor: {"type", "variant", "rot", "name", "lines"}.
-## "name" y "lines" solo se usan en los aldeanos.
+## Clave: celda. Valor: {"type", "variant", "rot", "name", "lines", "friendship", "follow"}.
+## "lines" solo se usa en los aldeanos. "name" es el nombre del aldeano o el que el jugador
+## le puso a un animal amigo. "friendship" (puntos, 0 a 12) y "follow" son progreso del
+## modo juego: se guardan con el mapa pero no son pasos de deshacer.
 var entities: Dictionary[Vector3i, Dictionary] = {}
 
 var _actors: Dictionary[Vector3i, EntityActor] = {}
@@ -13,7 +15,7 @@ var _actors: Dictionary[Vector3i, EntityActor] = {}
 
 ## Arma los datos de una criatura con todas sus claves, en un formato comparable.
 static func make_entity(type: int, variant: int, rot: int, npc_name: String = "",
-		lines: Array = []) -> Dictionary:
+		lines: Array = [], friendship: int = 0, follow: bool = false) -> Dictionary:
 	var clean: Array = []
 	for line: Variant in lines:
 		clean.append(str(line))
@@ -23,6 +25,8 @@ static func make_entity(type: int, variant: int, rot: int, npc_name: String = ""
 		"rot": posmod(rot, 4),
 		"name": npc_name,
 		"lines": clean,
+		"friendship": clampi(friendship, 0, Items.MAX_POINTS),
+		"follow": follow,
 	}
 
 
